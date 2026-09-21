@@ -91,6 +91,7 @@ func (t *selectorSpilloverTracker) release(selectorID, target string) {
 // and before the normal request context, filters, routing, and metrics pipeline.
 func CreateSelectorMiddleware(s *Server) chain.Middleware {
 	spillovers := newSelectorSpilloverTracker(s.cfg)
+	sessions := newSelectorSessionsTracker(s.cfg)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if len(s.cfg.Selectors) == 0 {
@@ -117,18 +118,27 @@ func CreateSelectorMiddleware(s *Server) chain.Middleware {
 				target, err = strategyWarm(s.cfg, selector, s.local.RunningModels())
 			case config.SelectorStrategySpillover:
 				target, err = strategySpillover(model, spillovers, s.local.RunningModels())
+			case config.SelectorStrategySessions:
+				target, err = strategySessions(model, sessions, r)
 			default:
 				err = fmt.Errorf("unknown selector strategy %q", selector.Strategy)
 			}
 			if err != nil {
+				if sessionsWriteError(w, r, err) {
+					return
+				}
 				swaputil.SendResponse(w, r, http.StatusServiceUnavailable, err.Error())
 				return
 			}
 
+			releaseSessions := selector.Strategy == config.SelectorStrategySessions
 			updated, err := swaputil.ReplaceRequestModel(r, model, target)
 			if err != nil {
 				if selector.Strategy == config.SelectorStrategySpillover {
 					spillovers.release(model, target)
+				}
+				if releaseSessions {
+					sessions.release(model, target)
 				}
 				swaputil.SendResponse(w, r, http.StatusBadRequest, err.Error())
 				return
@@ -145,6 +155,9 @@ func CreateSelectorMiddleware(s *Server) chain.Middleware {
 				} else {
 					defer spillovers.release(model, target)
 				}
+			}
+			if releaseSessions {
+				defer sessions.releaseAfter(s.cfg, model, target, updated)()
 			}
 			next.ServeHTTP(w, withSelectorContext(updated, model))
 		})

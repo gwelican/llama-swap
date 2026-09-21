@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -16,6 +17,14 @@ const (
 // SelectorSettings contains strategy-specific selector settings.
 type SelectorSettings struct {
 	Spillover int `yaml:"spillover" json:"spillover"`
+
+	// Sessions strategy: a client session sticks to one target until it goes
+	// idle, and new sessions only start on targets with a free session slot.
+	SessionIdleTimeout   time.Duration `yaml:"sessionIdleTimeout" json:"sessionIdleTimeout"`
+	MaxSessionsPerTarget int           `yaml:"maxSessionsPerTarget" json:"maxSessionsPerTarget"`
+	OnFull               string        `yaml:"onFull" json:"onFull"`
+	QueueTimeout         time.Duration `yaml:"queueTimeout" json:"queueTimeout"`
+	RetryAfter           time.Duration `yaml:"retryAfter" json:"retryAfter"`
 }
 
 // SelectorConfig describes a virtual model ID that resolves to a concrete
@@ -35,8 +44,15 @@ type SelectorConfig struct {
 func (c *SelectorConfig) UnmarshalYAML(value *yaml.Node) error {
 	type rawSelectorConfig SelectorConfig
 	defaults := rawSelectorConfig{
-		Targets:  []string{},
-		Settings: SelectorSettings{Spillover: 1},
+		Targets: []string{},
+		Settings: SelectorSettings{
+			Spillover:            1,
+			SessionIdleTimeout:   5 * time.Minute,
+			MaxSessionsPerTarget: 1,
+			OnFull:               SelectorSessionsOnFullQueue,
+			QueueTimeout:         10 * time.Minute,
+			RetryAfter:           30 * time.Second,
+		},
 		Metadata: map[string]any{},
 	}
 	if err := value.Decode(&defaults); err != nil {
@@ -59,11 +75,11 @@ func validateSelectors(config Config) error {
 		}
 
 		switch selector.Strategy {
-		case SelectorStrategyPin, SelectorStrategyWarm, SelectorStrategySpillover:
+		case SelectorStrategyPin, SelectorStrategyWarm, SelectorStrategySpillover, SelectorStrategySessions:
 		case "":
 			return fmt.Errorf("selectors.%s.strategy is required", selectorID)
 		default:
-			return fmt.Errorf("selectors.%s.strategy: unknown strategy %q (valid: warm, pin, spillover)", selectorID, selector.Strategy)
+			return fmt.Errorf("selectors.%s.strategy: unknown strategy %q (valid: warm, pin, spillover, sessions)", selectorID, selector.Strategy)
 		}
 		if len(selector.Targets) == 0 {
 			return fmt.Errorf("selectors.%s.targets must contain at least one entry", selectorID)
@@ -94,6 +110,13 @@ func validateSelectors(config Config) error {
 				}
 				resolvedTargets = append(resolvedTargets, realName)
 			}
+		}
+
+		if selector.Strategy == SelectorStrategySessions {
+			if err := validateSessionsSelector(config, selectorID, selector); err != nil {
+				return err
+			}
+			continue
 		}
 
 		if selector.Strategy != SelectorStrategySpillover {

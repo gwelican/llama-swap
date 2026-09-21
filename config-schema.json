@@ -367,7 +367,8 @@
                         "enum": [
                             "warm",
                             "pin",
-                            "spillover"
+                            "spillover",
+                            "sessions"
                         ],
                         "description": "How a target is selected for each request."
                     },
@@ -388,6 +389,39 @@
                                 "minimum": 1,
                                 "default": 1,
                                 "description": "Requests reserved per active target before spilling over to the next target."
+                            },
+                            "sessionIdleTimeout": {
+                                "type": "string",
+                                "pattern": "^[-+]?(\\d+(\\.\\d+)?(ns|us|ms|s|m|h))+$",
+                                "default": "5m",
+                                "description": "sessions strategy: how long a session keeps its target reserved after its last request."
+                            },
+                            "maxSessionsPerTarget": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "default": 1,
+                                "description": "sessions strategy: how many distinct sessions may hold a slot on one target at the same time."
+                            },
+                            "onFull": {
+                                "type": "string",
+                                "enum": [
+                                    "queue",
+                                    "reject"
+                                ],
+                                "default": "queue",
+                                "description": "sessions strategy: what a new session does when every target is held by live sessions."
+                            },
+                            "queueTimeout": {
+                                "type": "string",
+                                "pattern": "^[-+]?(\\d+(\\.\\d+)?(ns|us|ms|s|m|h))+$",
+                                "default": "10m",
+                                "description": "sessions strategy: maximum time a new session waits inside llama-swap for a slot when onFull is queue."
+                            },
+                            "retryAfter": {
+                                "type": "string",
+                                "pattern": "^[-+]?(\\d+(\\.\\d+)?(ns|us|ms|s|m|h))+$",
+                                "default": "30s",
+                                "description": "sessions strategy: Retry-After value sent with the 429 response when onFull is reject."
                             }
                         },
                         "additionalProperties": false,
