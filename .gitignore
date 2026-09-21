@@ -20,3 +20,6 @@ evals/docs-agent/training/__pycache__/
 
 # Playwright CLI artifacts (screenshots, snapshots, console logs)
 .playwright-cli/
+node_modules/
+.gocache
+.gomod

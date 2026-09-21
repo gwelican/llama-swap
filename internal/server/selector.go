@@ -95,6 +95,7 @@ func (t *selectorSpilloverTracker) release(selectorID, target string) {
 // and before the normal request context, filters, routing, and metrics pipeline.
 func CreateSelectorMiddleware(s *Server) chain.Middleware {
 	spillovers := newSelectorSpilloverTracker(s.cfg)
+	sessions := newSelectorSessionsTracker(s.cfg)
 	var ignored []string
 	for selectorID, selector := range s.cfg.Selectors {
 		if !s.cfg.SelectorEnabled(selector) {
@@ -144,18 +145,27 @@ func CreateSelectorMiddleware(s *Server) chain.Middleware {
 					swaputil.SendResponse(w, r, http.StatusTooManyRequests, err.Error())
 					return
 				}
+			case config.SelectorStrategySessions:
+				target, err = strategySessions(model, sessions, r)
 			default:
 				err = fmt.Errorf("unknown selector strategy %q", selector.Strategy)
 			}
 			if err != nil {
+				if sessionsWriteError(w, r, err) {
+					return
+				}
 				swaputil.SendResponse(w, r, http.StatusServiceUnavailable, err.Error())
 				return
 			}
 
+			releaseSessions := selector.Strategy == config.SelectorStrategySessions
 			updated, err := swaputil.ReplaceRequestModel(r, model, target)
 			if err != nil {
 				if selector.Strategy == config.SelectorStrategySpillover {
 					spillovers.release(model, target)
+				}
+				if releaseSessions {
+					sessions.release(model, target)
 				}
 				swaputil.SendResponse(w, r, http.StatusBadRequest, err.Error())
 				return
@@ -172,6 +182,9 @@ func CreateSelectorMiddleware(s *Server) chain.Middleware {
 				} else {
 					defer spillovers.release(model, target)
 				}
+			}
+			if releaseSessions {
+				defer sessions.releaseAfter(s.cfg, model, target, updated)()
 			}
 			next.ServeHTTP(w, withSelectorContext(updated, model))
 		})
