@@ -162,7 +162,7 @@
             "type": "integer",
             "minimum": 15,
             "default": 120,
-            "description": "Number of seconds to wait for a model to be ready to serve requests."
+            "description": "Number of seconds to wait for a model to be ready to serve requests. When the health check reports loading progress, the countdown restarts each time the progress value changes."
         },
         "globalTTL": {
             "type": "integer",
@@ -516,7 +516,7 @@
                         "type": "string",
                         "default": "/health",
                         "pattern": "^/.*$|^none$",
-                        "description": "URL path to check if the server is ready. Use 'none' to skip health checking."
+                        "description": "URL path to check if the server is ready. Use 'none' to skip health checking. A non-200 response with a JSON body like {\"progress\": 0.42, \"message\": \"...\"} reports loading progress."
                     },
                     "ttl": {
                         "type": "integer",
@@ -587,6 +587,11 @@
                     },
                     "timeouts": {
                         "$ref": "#/definitions/timeouts"
+                    },
+                    "disableKeepAlives": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Open a new upstream connection for every request instead of reusing idle ones. Works around upstreams that close a connection they advertised as keep-alive, such as llama-server after a streamed response (#1205). When true, timeouts.idleConn has no effect."
                     },
                     "compat": {
                         "type": "object",
