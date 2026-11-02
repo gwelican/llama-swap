@@ -19,3 +19,6 @@ evals/config.yaml
 node_modules/
 .gocache
 .gomod
+
+# Playwright CLI artifacts (screenshots, snapshots, console logs)
+.playwright-cli/
