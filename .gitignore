@@ -19,6 +19,7 @@ evals/config.yaml
 node_modules/
 .gocache
 .gomod
+evals/docs-agent/training/__pycache__/
 
 # Playwright CLI artifacts (screenshots, snapshots, console logs)
 .playwright-cli/

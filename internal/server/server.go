@@ -184,6 +184,10 @@ var modelGetRoutes = []string{
 	"/v1/audio/voices",
 	"/sdapi/v1/loras",
 	"/props",
+
+	// websocket upgrade, OpenAI Realtime API style (?model=..., or the
+	// model named by the first session.update event)
+	"/v1/realtime",
 }
 
 // meteredRoutes maps every endpoint the metrics middleware records to the
@@ -217,6 +221,9 @@ var meteredRoutes = map[string]hint.Task{
 
 	"/v1/systemone":          hint.TaskDecision,
 	"/audioapi/v1/tasks/run": hint.TaskAudio,
+
+	// a websocket, recorded once per session when it closes
+	"/v1/realtime": hint.TaskRealtime,
 
 	// versionless routes, see issue #728
 	"/v/chat/completions":      hint.TaskChat,
@@ -427,7 +434,13 @@ func (s *Server) routes() {
 		mux.Handle("POST "+path, modelChain.Then(dispatch))
 	}
 	for _, path := range modelGetRoutes {
-		mux.Handle("GET "+path, modelChain.Then(dispatch))
+		h := modelChain.Then(dispatch)
+		if path == "/v1/realtime" {
+			// Realtime transcription clients name the model in a
+			// session.update event rather than the URL; see realtime_defer.go.
+			h = deferRealtimeModel(authMW, h)
+		}
+		mux.Handle("GET "+path, h)
 	}
 
 	// llama-swap API + custom endpoints.
