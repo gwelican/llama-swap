@@ -528,3 +528,31 @@ func TestMetricsMonitor_RecordWithoutHint(t *testing.T) {
 	assert.Empty(t, entries[0].Route)
 	assert.Empty(t, entries[0].PeerID)
 }
+
+func TestMetricsMonitor_RequestCounts(t *testing.T) {
+	mm := newTestMetricsMonitor(t, logmon.NewWriter(io.Discard), 10, 0)
+
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx, h := hint.New(r.Context())
+	h.Upstream = hint.Hipfire
+	r = r.WithContext(ctx)
+	copier := newBodyCopier(httptest.NewRecorder())
+	copier.Header().Set("Content-Type", "application/json")
+	copier.WriteHeader(http.StatusOK)
+	copier.Write([]byte(`{"usage":{"prompt_tokens":12,"completion_tokens":7}}`))
+	mm.record("prom", hint.TaskChat, r, copier, 0, nil, nil)
+
+	r2 := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx2, h2 := hint.New(r2.Context())
+	h2.Upstream = hint.Hipfire
+	r2 = r2.WithContext(ctx2)
+	copier2 := newBodyCopier(httptest.NewRecorder())
+	copier2.WriteHeader(http.StatusBadGateway)
+	mm.record("prom", hint.TaskChat, r2, copier2, 0, nil, nil)
+
+	var buf strings.Builder
+	mm.counts.writePrometheus(&buf)
+	out := buf.String()
+	assert.Contains(t, out, `llamaswap_requests_total{model="prom",task="chat",status="2xx"} 1`)
+	assert.Contains(t, out, `llamaswap_requests_total{model="prom",task="chat",status="5xx"} 1`)
+}

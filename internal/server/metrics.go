@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +28,62 @@ import (
 
 type TokenMetrics = store.TokenMetrics
 type ActivityLogEntry = store.ActivityLogEntry
+
+// requestCounts counts completed requests by model, task, and status
+// class. handleMetrics appends it to the Prometheus text endpoint.
+// ponytail: label sets grow with configured models/tasks, which are few;
+// add LRU eviction if they ever explode.
+type requestCounts struct {
+	mu     sync.Mutex
+	counts map[[3]string]int64
+}
+
+func (rc *requestCounts) add(model, task string, status int) {
+	key := [3]string{model, task, statusClass(status)}
+	rc.mu.Lock()
+	if rc.counts == nil {
+		rc.counts = make(map[[3]string]int64)
+	}
+	rc.counts[key]++
+	rc.mu.Unlock()
+}
+
+// statusClass maps a status code to its Prometheus class label ("2xx",
+// "4xx"), keeping cardinality bounded.
+func statusClass(code int) string {
+	return fmt.Sprintf("%dxx", code/100)
+}
+
+// escapeLabel escapes characters invalid in Prometheus label values.
+var labelEscaper = strings.NewReplacer(`"`, `\"`, `\`, `\\`, "\n", `\n`)
+
+// writePrometheus appends llamaswap_requests_total in Prometheus text format.
+func (rc *requestCounts) writePrometheus(w io.Writer) {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	if len(rc.counts) == 0 {
+		return
+	}
+	keys := make([][3]string, 0, len(rc.counts))
+	for k := range rc.counts {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		a, b := keys[i], keys[j]
+		if a[0] != b[0] {
+			return a[0] < b[0]
+		}
+		if a[1] != b[1] {
+			return a[1] < b[1]
+		}
+		return a[2] < b[2]
+	})
+	fmt.Fprintf(w, "# HELP llamaswap_requests_total Completed proxied requests by model, task, and status class\n# TYPE llamaswap_requests_total counter\n")
+	for _, k := range keys {
+		fmt.Fprintf(w, "llamaswap_requests_total{model=\"%s\",task=\"%s\",status=\"%s\"} %d\n",
+			labelEscaper.Replace(k[0]), labelEscaper.Replace(k[1]), k[2], rc.counts[k])
+	}
+}
 
 // ActivityLogEvent carries a single activity log entry to event subscribers.
 type ActivityLogEvent struct {
@@ -52,6 +109,7 @@ type metricsMonitor struct {
 	logger          *logmon.Monitor
 	enableCaptures  bool
 	maxCaptureBytes int64
+	counts          requestCounts
 
 	// pruneCh wakes the prune goroutine. It holds one pending request, so
 	// many captures written while a prune runs cause one more prune, not
@@ -138,6 +196,7 @@ func (mp *metricsMonitor) queueMetrics(metric ActivityLogEntry) (ActivityLogEntr
 		mp.warnf("failed to persist activity metric: %v", err)
 		return ActivityLogEntry{}, false
 	}
+	mp.counts.add(metric.Model, metric.Task, metric.RespStatusCode)
 	if mp.store.IsInMemory() {
 		if err := mp.store.Activity().Prune(ctx, mp.maxMetrics); err != nil {
 			mp.warnf("failed to prune activity metrics: %v", err)
