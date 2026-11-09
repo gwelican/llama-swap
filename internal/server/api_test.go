@@ -617,8 +617,19 @@ func TestServer_HandleMetrics_Unavailable(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503", w.Code)
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+}
+
+func TestServer_HandleMetrics_RequestCounter(t *testing.T) {
+	s := newTestServer(newStubRouter(nil, ""), newStubRouter(nil, ""))
+	s.metrics.counts.add("m1", "chat", 200)
+
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(w.Body.String(), `llamaswap_requests_total{model="m1",task="chat",status="2xx"} 1`) {
+		t.Errorf("body = %q, want llamaswap_requests_total counter line", w.Body.String())
 	}
 }
 
