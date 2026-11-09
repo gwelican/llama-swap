@@ -435,16 +435,16 @@ func (s *Server) startPreload() {
 	}()
 }
 
-// handleMetrics serves Prometheus-format performance metrics. Returns 503 when
-// performance monitoring is disabled.
+// handleMetrics serves Prometheus-format performance metrics and the
+// request counter. Performance stats are omitted when monitoring is
+// disabled; the request counter is always present.
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	s.metrics.counts.writePrometheus(w)
 	if s.perf == nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte("# performance monitor not available\n"))
 		return
 	}
 	s.perf.MetricsHandler().ServeHTTP(w, r)
-	s.metrics.counts.writePrometheus(w)
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
