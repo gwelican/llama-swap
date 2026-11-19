@@ -128,6 +128,39 @@ func TestServer_HandleListModels_Aliases(t *testing.T) {
 	}
 }
 
+// A YAML 1.1 `off:` key in model metadata decodes to a bool key nested inside
+// map[string]any; json.Marshal on it fails, and encoding the response after
+// the header is sent served 200 with an empty body. The handler must answer
+// 500 with a JSON error instead.
+func TestServer_HandleListModels_UnserializableMetadata(t *testing.T) {
+	s := newTestServer(newStubRouter(nil, ""), newStubRouter(nil, ""))
+	s.cfg = config.Config{
+		Models: map[string]config.ModelConfig{
+			"model1": {Metadata: map[string]any{
+				"thinking": map[bool]any{false: map[string]any{}},
+			}},
+		},
+	}
+
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/models", nil))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 (body %q)", w.Code, w.Body.String())
+	}
+	if w.Body.Len() == 0 {
+		t.Error("empty body; clients read it as a null model list")
+	}
+	var resp struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Errorf("body is not JSON: %q (%v)", w.Body.String(), err)
+	}
+}
+
 func TestServer_HandleListModels_Status(t *testing.T) {
 	local := newStubRouter(nil, "")
 	local.running = map[string]process.ProcessState{"loaded-model": process.StateReady}

@@ -312,10 +312,20 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	// Marshal before writing: a non-string key in model metadata (e.g. a
+	// YAML 1.1 `off:` key decoded as bool) makes json.Marshal fail, and
+	// encoding after the header is sent serves 200 with an empty body that
+	// OpenAI clients read as a null model list.
+	body, err := json.Marshal(map[string]any{
 		"object": "list",
 		"data":   data,
 	})
+	if err != nil {
+		s.logs.ProxyLogs.Errorf("failed to encode /v1/models: %v", err)
+		swaputil.SendResponse(w, r, http.StatusInternalServerError, "failed to encode model list")
+		return
+	}
+	w.Write(body)
 }
 
 // runningModel is one entry in the /running listing.
